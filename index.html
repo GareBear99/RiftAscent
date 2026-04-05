@@ -121,6 +121,32 @@
     .footer .right #menuAudioBtn{min-width:148px}
     .footer .right #menuInfoBtn{min-width:110px}
     @media(max-width:1180px){.footer .right{justify-content:flex-start}.footer .right #achievementsBtn{margin-left:0}}
+    .menuActionRow{
+      display:grid !important;
+      grid-template-columns:repeat(7,minmax(0,1fr));
+      align-items:stretch;
+      gap:8px;
+      width:100%;
+      flex:1 1 100%;
+    }
+    .menuActionRow button{
+      width:100%;
+      min-width:0 !important;
+      margin:0 !important;
+      padding:8px clamp(6px,.8vw,12px);
+      font-size:clamp(10px,.78vw,14px);
+      line-height:1.05;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .menuActionRow #menuInfoBtn{display:flex;align-items:center;justify-content:center;gap:6px}
+    .menuActionRow #menuInfoBtn .lab,.menuActionRow #menuInfoBtn .q{display:inline-flex;align-items:center}
+    @media(max-width:920px){
+      .menuActionRow{grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+      .menuActionRow button{padding:8px 4px;font-size:clamp(9px,1.55vw,12px);letter-spacing:.015em}
+      .menuActionRow #menuInfoBtn{gap:4px}
+    }
     .debug{
       position:fixed;right:12px;top:12px;z-index:12;
       width:min(560px, calc(100vw - 24px));
@@ -1127,10 +1153,10 @@ border-radius:10px;padding:10px 12px;backdrop-filter: blur(6px);">
       <div class="right">
         <span class="tag">Prestige persists locally. <span class="kbd">SHIFT+R</span> wipes save.</span>
       </div>
-      <div class="right">
+      <div class="right menuActionRow">
         <button id="startCycleBtn" class="secondary">Start Prestige Cycle</button>
         <button id="startInfiniteBtn">Start Infinite Heat</button>
-        <button id="dailyChallengeBtn" class="secondary">Daily Challenge</button>
+        <button id="dailyChallengeBtn" class="secondary">Challenge</button>
         <button id="coopOnlineBtn" class="secondary">Co-op (Online)</button>
         <button id="dailyBtn" class="ghost">Daily</button>
         <button id="achievementsBtn" class="ghost">Achievements</button>
@@ -3096,7 +3122,7 @@ const isFiniteNumber = (v)=> (typeof v==="number" && Number.isFinite(v));
         </div>
 `;
     
-    // Keep the AUDIO plugin button stacked ABOVE the automation/toggles panel (never overlapping it).
+    // Keep the AUDIO plugin button stacked UNDER the automation/toggles panel (never overlapping it).
     function positionCornerAudioBtn(){
       try{
         const btn = document.getElementById("iapOpenFloating");
@@ -3106,8 +3132,7 @@ const isFiniteNumber = (v)=> (typeof v==="number" && Number.isFinite(v));
         btn.style.right = "14px";
         if(panel){
           const panelRect = panel.getBoundingClientRect();
-          const btnRect = btn.getBoundingClientRect();
-          const desiredTop = Math.max(14, Math.round(panelRect.top - btnRect.height - 12));
+          const desiredTop = Math.round(panelRect.bottom + 12);
           btn.style.top = `${desiredTop}px`;
           btn.style.bottom = "auto";
         }else{
@@ -4333,6 +4358,34 @@ window.addEventListener('focus', INTENT.wrap('window.focus.padJoinSync', ()=>{ t
   function wipeSave(){
     try{ localStorage.removeItem(SAVE_KEY); log("SAVE wiped"); }
     catch(err){ log("SAVE wipe failed: " + err); }
+  }
+
+  function __wipePrestigeState(reason){
+    try{
+      prestige = 0;
+      pp = 0;
+      metaProfile = defaultProfile();
+      __cycleLoadoutSeed = "";
+      __cycleLoadoutAppliedThisRun = false;
+      try{ __saveCycleLoadoutSeed("", reason||"cycle_death_reset"); }catch(_e){}
+      try{
+        localStorage.setItem(SAVE_KEY, JSON.stringify({
+          ver: SAVE_VER,
+          prestige: 0,
+          pp: 0,
+          profile: defaultProfile(),
+          cycleLoadoutSeed: ""
+        }));
+      }catch(_e){}
+      try{ applyMeta(); }catch(_e){}
+      try{ updateMenuStats(); }catch(_e){}
+      try{ log(`PRESTIGE STATE RESET (${reason||"cycle_death"})`); }catch(_e){}
+      try{ toast("PRESTIGE STATE LOST • RESET TO 0"); }catch(_e){}
+      return true;
+    }catch(err){
+      try{ log("PRESTIGE RESET failed: " + err); }catch(_e){}
+      return false;
+    }
   }
 
 
@@ -9664,7 +9717,8 @@ function startCycle(){
     __cycleLoadoutAppliedThisRun = false;
     __runId = (__runId|0) + 1;
     try{ __applySavedCycleLoadout("cycle_start"); }catch(_e){}
-    grantRunStartPP('CYCLE');
+    // DARPA canonical rule: Prestige run start does not bank PP automatically.
+    // Permanent progression only commits on Wave 100 clear.
     // Apply any pending loadout seed AFTER reset (so it survives startCycle/startInfinite resets)
     try{
       const R = (globalThis.__RIFT = globalThis.__RIFT || {});
@@ -9784,7 +9838,9 @@ function startCycle(){
     hud.style.display = "none";
     overlay.querySelector("h1").textContent = "SYSTEM FAILURE";
     const extra = mode===MODE.INFINITE ? `Time <b>${fmtTime(timeSurvived)}</b> • Heat <b>${Math.floor(heat)}</b>` : `Wave <b>${wave}</b>`;
-    overlay.querySelector("p").innerHTML = `${extra} • Score <b>${player.score}</b> • Prestige <b>${prestige}</b> • <span class="kbd">R</span> retry`;
+    overlay.querySelector("p").innerHTML = (mode===MODE.CYCLE)
+      ? `${extra} • Score <b>${player.score}</b> • Prestige state lost • <span class="kbd">R</span> restart from 0`
+      : `${extra} • Score <b>${player.score}</b> • Prestige <b>${prestige}</b> • <span class="kbd">R</span> retry`;
   }
 
   startCycleBtn.addEventListener("click", INTENT.wrap("startCycleBtn.click", function(e){
@@ -9845,6 +9901,7 @@ function startCycle(){
     if(e.key.toLowerCase()==="r" && state===STATE.LOSE){
       // restart same mode
       if(mode===MODE.CYCLE) startCycle();
+      else if(mode===MODE.DAILY && typeof daily_startChallenge==='function') daily_startChallenge();
       else startInfinite();
     }
     if(e.key.toLowerCase()==="b"){
@@ -11518,7 +11575,7 @@ if((__manualShoot || __allowAutoShoot) && player.fireCooldown<=0){
 
 // Yellow Surge: spectrum arcs zap enemies and evolve them into supercharged forms.
 // Uses spectrum energy bands if available (more energy = more frequent arcs).
-if(heatTier()===4){
+if((ULTRA && typeof ULTRA.heatTier === "function" ? ULTRA.heatTier() : 0)===4){
   const frame = globalThis.__SPECTRUM_FRAME;
   const eng = frame ? clamp(frame.energy||0, 0, 1) : 0.35;
   _surgeZapCD -= dt;
@@ -13556,7 +13613,7 @@ function daily_updateMenuButtons(){
       const target = (c.targetWave|0) || 20;
       const best = (c.bestWave|0) || 0;
       const completed = !!c.completed;
-      bCh.textContent = completed ? `Daily Challenge ✓ (W${target})` : `Daily Challenge (W${target})`;
+      bCh.textContent = completed ? `Challenge ✓ (W${target})` : `Challenge (W${target})`;
       bCh.title = `Day ${day} • target W${target} • best W${best}` + (completed ? " • completed" : "");
       // Keep it clickable even if completed (lets you replay) but show status.
       bCh.dataset.completed = completed ? "1" : "0";
@@ -15924,7 +15981,7 @@ midiFile && midiFile.addEventListener("change", WRAP("iap.midiFile.change", ()=>
   </div>
 </div>
 
-<div id="iapOpenFloating" class="audioPluginBtn" data-audio-plugin-btn="1" title="Open Infinite Audio Plugin" style="position:fixed;right:14px;bottom:92px;z-index:99999;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.22);background:rgba(0,0,0,.45);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 12px 40px rgba(0,0,0,.55);cursor:pointer;user-select:none">
+<div id="iapOpenFloating" class="audioPluginBtn" data-audio-plugin-btn="1" title="Open Infinite Audio Plugin" style="position:fixed;right:14px;bottom:14px;z-index:99999;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.22);background:rgba(0,0,0,.45);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 12px 40px rgba(0,0,0,.55);cursor:pointer;user-select:none">
   <span style="font-weight:800;letter-spacing:.06em">AUDIO</span>
   <span style="opacity:.9">▸</span>
   <span style="font-size:11px;opacity:.75">plugin</span>
@@ -18671,19 +18728,18 @@ document.addEventListener("DOMContentLoaded", function(){
   if(typeof oldSpawn === 'function') globalThis.spawnP2 = function(idx){ CTRL.p2Pad = String(idx); const r = oldSpawn.apply(this, arguments); syncPauseFields(); updatePadHudText(); return r; };
   const oldDrop = globalThis.dropP2;
   if(typeof oldDrop === 'function') globalThis.dropP2 = function(reason){ const r = oldDrop.apply(this, arguments); syncPauseFields(); updatePadHudText(); return r; };
-  if(typeof globalThis.daily_startChallenge === 'function'){
-    globalThis.daily_startChallenge = function(){
+  if(typeof globalThis.daily_startChallenge === 'function' && !globalThis.daily_startChallenge.__darpaWrapped){
+    const __dailyStartCanonical = globalThis.daily_startChallenge;
+    const __dailyWrapped = function(){
       try{
-        if(typeof globalThis.__preflight_runstart === 'function' && !globalThis.__preflight_runstart('daily')) return false;
-        try{ if(typeof daily_rollIfNeeded==='function') daily_rollIfNeeded(); }catch(e){}
-        globalThis.__dailyChallengeActive = true;
-        try{ mode = (typeof MODE!=='undefined' && MODE && MODE.DAILY!=null) ? MODE.DAILY : 2; }catch(e){ globalThis.mode = 2; }
-        try{ if(typeof daily_resetRun==='function') daily_resetRun(); }catch(e){}
-        try{ if(typeof startInfinite==='function') startInfinite(); }catch(e){}
-        try{ mode = (typeof MODE!=='undefined' && MODE && MODE.DAILY!=null) ? MODE.DAILY : 2; }catch(e){ globalThis.mode = 2; }
-        return true;
-      }catch(e){ try{ intentLog('daily','challenge','THREW', String(e&&e.message||e)); }catch(_e){} return false; }
+        return __dailyStartCanonical.apply(this, arguments);
+      }catch(e){
+        try{ intentLog('daily','challenge','THREW', String(e&&e.message||e)); }catch(_e){}
+        return false;
+      }
     };
+    __dailyWrapped.__darpaWrapped = true;
+    globalThis.daily_startChallenge = __dailyWrapped;
   }
   function scrubLegendAliveRows(){
     const root = document.getElementById('enemyLegend'); if(!root) return;
@@ -23125,6 +23181,8 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
   }
 
   function init(){
+    if(W.__hotfix49InitDone) return;
+    W.__hotfix49InitDone = true;
     bindButton('startCycleBtn', 'CYCLE');
     bindButton('startInfiniteBtn', 'INFINITE');
     softenFalseStall();
@@ -23446,7 +23504,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
 </script>
 
 
-<script id="hotfix52_start_recovery_killer">
+<script type="application/x-rift-disabled" data-disabled-by="darpa-final-hardening" id="hotfix52_start_recovery_killer">
 (function(){
   const W=window,D=document;
   if(W.__RIFT_HOTFIX52_START_RECOVERY_KILLER__) return;
@@ -23589,7 +23647,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
 </script>
 
 
-<script id="hotfix53_canonical_run_router_complete">
+<script type="application/x-rift-disabled" data-disabled-by="darpa-final-hardening" id="hotfix53_canonical_run_router_complete">
 (function(){
   const W=window,D=document;
   if(W.__RIFT_HOTFIX53_CANONICAL_RUN_ROUTER__) return;
@@ -23767,7 +23825,8 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
 
   function bindMissionCritical(id, modeName){
     const old = byId(id);
-    if(!old) return;
+    if(!old || old.__riftMissionCriticalBound) return;
+    old.__riftMissionCriticalBound = true;
     const clone = old.cloneNode(true);
     clone.__hotfix53Bound = true;
     old.replaceWith(clone);
@@ -23877,7 +23936,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
     pointer-events: none !important;
   }
 </style>
-<script id="hotfix57_info_audio_authority_final_script">
+<script type="application/x-rift-disabled" data-disabled-by="darpa-audio-authority" id="hotfix57_info_audio_authority_final_script">
 (function(){
   const D=document, W=window;
   const WRAP = (W.INTENT && typeof W.INTENT.wrap === 'function') ? W.INTENT.wrap : function(_n,fn){ return fn; };
@@ -24054,7 +24113,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
     z-index:2147483600 !important;
   }
 </style>
-<script id="hotfix58_info_nonhiding_audio_visible_script">
+<script type="application/x-rift-disabled" data-disabled-by="darpa-audio-authority" id="hotfix58_info_nonhiding_audio_visible_script">
 (function(){
   const D=document, W=window;
   function byId(id){ try{return D.getElementById(id);}catch(_e){return null;} }
@@ -24196,7 +24255,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
     pointer-events:auto !important;
   }
 </style>
-<script id="hotfix61_hud_audio_info_script">
+<script type="application/x-rift-disabled" data-disabled-by="darpa-audio-authority" id="hotfix61_hud_audio_info_script">
 (function(){
   if(window.__RIFT_HOTFIX61__) return;
   window.__RIFT_HOTFIX61__ = true;
@@ -24545,104 +24604,290 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
     el.parentNode.replaceChild(clone, el);
     return clone;
   }
-  function removeMenuAudio(){
-    var b = byId('menuAudioBtn');
-    if(b) b.remove();
-  }
-  function bindInfo(){
-    var btn = byId('menuInfoBtn');
-    if(!btn) return;
-    btn = replaceWithClone(btn);
-    btn.onclick = function(ev){
-      ev.preventDefault(); ev.stopPropagation();
-      showOverlay('docsOverlay');
-      return false;
-    };
-  }
-  function ensureOverlayClosers(){
-    [['docsOverlay','docsOverlayClose'],['audioPluginOverlay','iapCloseBtn']].forEach(function(pair){
-      var overlay = byId(pair[0]);
-      var close = byId(pair[1]);
-      if(close){
-        close = replaceWithClone(close);
-        close.onclick = function(ev){ ev.preventDefault(); ev.stopPropagation(); hideOverlay(pair[0]); return false; };
-      }
-      if(overlay){
-        overlay.addEventListener('click', function(ev){ if(ev.target===overlay) hideOverlay(pair[0]); }, true);
-      }
-    });
-    document.addEventListener('keydown', function(ev){ if(ev.key === 'Escape'){ hideOverlay('docsOverlay'); hideOverlay('audioPluginOverlay'); } }, true);
-  }
-  function ensureFloatingAudio(){
-    var btn = byId('iapOpenFloating');
-    if(btn) btn.remove();
-    btn = document.createElement('button');
-    btn.id = 'iapOpenFloating';
-    btn.type = 'button';
-    btn.innerHTML = '<span style="font-weight:900">AUDIO</span><span style="opacity:.7">▸ plugin</span>';
-    btn.style.minWidth = '92px';
-    btn.style.height = '42px';
-    btn.style.padding = '0 12px';
-    btn.style.borderRadius = '14px';
-    btn.style.border = '1px solid rgba(255,255,255,.16)';
-    btn.style.background = 'rgba(0,0,0,.45)';
-    btn.style.color = '#fff';
-    btn.style.fontWeight = '900';
-    btn.style.letterSpacing = '.04em';
-    btn.style.boxShadow = '0 8px 24px rgba(0,0,0,.28)';
-    btn.style.backdropFilter = 'blur(10px)';
-    btn.style.webkitBackdropFilter = 'blur(10px)';
-    btn.style.cursor = 'pointer';
-    btn.onclick = function(ev){ ev.preventDefault(); ev.stopPropagation(); showOverlay('audioPluginOverlay'); return false; };
-    document.body.appendChild(btn);
+<script>/* darpa cleanup: removed legacy duplicate overlay/audio and regressed v12 intercept layers; single-authority controller remains */</script>
+
+<script id="darpa_audio_button_single_authority">
+(function(){
+  if(window.__DARPA_AUDIO_SINGLE_AUTHORITY__) return;
+  window.__DARPA_AUDIO_SINGLE_AUTHORITY__ = true;
+  const D = document, W = window;
+  const byId = (id)=>D.getElementById(id);
+  const PASSIVE = {passive:true};
+
+  function ensureBtn(){
+    let btn = byId('iapOpenFloating');
+    if(!btn){
+      btn = D.createElement('button');
+      btn.id = 'iapOpenFloating';
+      btn.type = 'button';
+      btn.className = 'audioPluginBtn';
+      btn.innerHTML = '<span style="font-weight:1000">AUDIO</span><span aria-hidden="true">▸</span>';
+      D.body.appendChild(btn);
+    }
+    btn.setAttribute('title','Open Infinite Audio Plugin');
+    btn.setAttribute('aria-label','Open Infinite Audio Plugin');
+    btn.style.position = 'fixed';
+    btn.style.right = '14px';
+    btn.style.bottom = '14px';
+    btn.style.top = 'auto';
+    btn.style.left = 'auto';
+    btn.style.display = 'flex';
+    btn.style.visibility = 'visible';
+    btn.style.opacity = '1';
+    btn.style.pointerEvents = 'auto';
+    btn.style.zIndex = '2147483005';
+    btn.style.transform = 'none';
+    btn.style.transition = 'none';
     return btn;
   }
-  function dockAudio(){
-    var btn = byId('iapOpenFloating');
-    var panel = byId('skipHud');
-    if(!btn) return;
+
+  function ensureOverlay(id){
+    const el = byId(id);
+    if(el && el.parentNode !== D.body) D.body.appendChild(el);
+    return el;
+  }
+
+  function isOpen(el){
+    if(!el) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
+  }
+
+  function setArrow(btn, open){
+    try{
+      const arrow = btn.querySelector('span:nth-child(2)');
+      if(arrow) arrow.textContent = open ? '▾' : '▸';
+    }catch(_e){}
+  }
+
+  function closeDocs(){
+    const ov = ensureOverlay('docsOverlay');
+    if(!ov) return;
+    ov.style.display = 'none';
+    ov.setAttribute('aria-hidden','true');
+  }
+
+  function setAudioOpen(open){
+    const ov = ensureOverlay('audioPluginOverlay');
+    const btn = ensureBtn();
+    if(!ov) return;
+    ov.style.display = open ? 'flex' : 'none';
+    ov.setAttribute('aria-hidden', open ? 'false' : 'true');
+    setArrow(btn, open);
+  }
+
+  function openAudio(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    closeDocs();
+    setAudioOpen(true);
+  }
+
+  function closeAudio(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    setAudioOpen(false);
+  }
+
+  function wrapIntent(label, fn){
+    try{
+      if (W.INTENT && typeof W.INTENT.wrap === 'function') return W.INTENT.wrap(label, fn);
+      if (globalThis.INTENT && typeof globalThis.INTENT.wrap === 'function') return globalThis.INTENT.wrap(label, fn);
+      if (typeof WRAP === 'function') return WRAP(label, fn);
+    }catch(_e){}
+    return fn;
+  }
+
+  function bindOnce(el, key, fn, label){
+    if(!el) return;
+    if(el.dataset[key] === '1') return;
+    el.dataset[key] = '1';
+    el.addEventListener('click', wrapIntent(label || ('evt.click.' + key), fn));
+  }
+
+  function bindControls(){
+    const btn = ensureBtn();
+    const ov = ensureOverlay('audioPluginOverlay');
+    const menuBtn = byId('menuAudioBtn');
+    const closeBtn = byId('iapCloseBtn');
+    bindOnce(btn, 'darpaBound', function(e){
+      if(isOpen(ov)) closeAudio(e); else openAudio(e);
+    }, 'iap.floatOpen.click');
+    bindOnce(menuBtn, 'darpaBound', openAudio, 'menu.audio.open');
+    bindOnce(closeBtn, 'darpaBound', closeAudio, 'iap.close.click');
+    if(ov && ov.dataset.darpaBackdropBound !== '1'){
+      ov.dataset.darpaBackdropBound = '1';
+      ov.addEventListener('click', wrapIntent('iap.overlay.backdrop', function(e){
+        if(e.target === ov) closeAudio(e);
+      }));
+    }
+  }
+
+  function place(){
+    const btn = ensureBtn();
+    const panel = byId('skipHud');
+    let bottom = 14;
     if(panel){
-      var r = panel.getBoundingClientRect();
-      btn.style.right = Math.max(14, window.innerWidth - r.right) + 'px';
-      var top = Math.min(window.innerHeight - 56, r.bottom + 12);
-      btn.style.top = top + 'px';
-      btn.style.bottom = 'auto';
-    } else {
-      btn.style.right = '14px';
-      btn.style.bottom = '14px';
-      btn.style.top = 'auto';
+      const r = panel.getBoundingClientRect();
+      const vh = W.innerHeight || D.documentElement.clientHeight || 0;
+      if(r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < vh){
+        bottom = Math.max(14, vh - r.top + 12);
+      }
     }
+    btn.style.bottom = bottom + 'px';
   }
-  function moveRightSurfacesToBody(){
-    ['cornerHud','enemyLegend','docsOverlay','audioPluginOverlay'].forEach(function(id){
-      var el = byId(id); if(el) safeAppendToBody(el);
-    });
-  }
-  function cleanupLegend(){
-    var sum = byId('legendSummaryDock'); if(sum) sum.style.display='none';
-    var mini = byId('legendMiniDock'); if(mini) mini.style.display='none';
-    var hud = byId('cornerHud');
-    if(hud){
-      hud.setAttribute('aria-hidden','false');
-      hud.style.display='block';
-      hud.style.opacity='1';
-      hud.style.visibility='visible';
+
+  function normalize(){
+    const btn = ensureBtn();
+    const menuBtn = byId('menuAudioBtn');
+    if(menuBtn){
+      menuBtn.textContent = 'AUDIO';
+      menuBtn.style.display = '';
+      menuBtn.style.visibility = '';
+      menuBtn.style.opacity = '1';
+      menuBtn.style.pointerEvents = 'auto';
     }
+    place();
+    setArrow(btn, isOpen(byId('audioPluginOverlay')));
   }
-  function boot(){
-    moveRightSurfacesToBody();
-    removeMenuAudio();
-    bindInfo();
-    ensureOverlayClosers();
-    ensureFloatingAudio();
-    cleanupLegend();
-    dockAudio();
+
+  function tick(){
+    bindControls();
+    normalize();
   }
-  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, {once:true}); else boot();
-  window.addEventListener('resize', dockAudio, {passive:true});
-  setInterval(function(){ removeMenuAudio(); cleanupLegend(); dockAudio(); }, 500);
+
+  if(D.readyState === 'loading') W.addEventListener('DOMContentLoaded', WRAP('audio.domready.tick', tick), {once:true});
+  else tick();
+  W.addEventListener('resize', WRAP('audio.float.resize', place), PASSIVE);
+  W.addEventListener('orientationchange', WRAP('audio.float.orientation', place), PASSIVE);
+  D.addEventListener('keydown', WRAP('audio.esc', function(e){
+    if(e.key === 'Escape') closeAudio(e);
+  }));
+  setTimeout(tick, 50);
+  setTimeout(place, 250);
 })();
 </script>
+
+
+
+
+
+
+
+<style id="hotfix57_menu_row_authority_v2">
+  #overlay .footer > .right.menuActionRow{
+    display:grid !important;
+    grid-template-columns:repeat(7,minmax(0,1fr)) !important;
+    gap:8px !important;
+    align-items:stretch !important;
+    justify-content:stretch !important;
+    flex:1 1 auto !important;
+    width:100% !important;
+    min-width:0 !important;
+    margin:0 !important;
+  }
+  #overlay .footer > .right.menuActionRow > #startCycleBtn,
+  #overlay .footer > .right.menuActionRow > #startInfiniteBtn,
+  #overlay .footer > .right.menuActionRow > #dailyChallengeBtn,
+  #overlay .footer > .right.menuActionRow > #coopOnlineBtn,
+  #overlay .footer > .right.menuActionRow > #dailyBtn,
+  #overlay .footer > .right.menuActionRow > #achievementsBtn,
+  #overlay .footer > .right.menuActionRow > #menuInfoBtn{
+    display:inline-flex !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    position:static !important;
+    left:auto !important;
+    top:auto !important;
+    right:auto !important;
+    bottom:auto !important;
+    width:100% !important;
+    min-width:0 !important;
+    max-width:none !important;
+    height:40px !important;
+    margin:0 !important;
+    align-items:center !important;
+    justify-content:center !important;
+    white-space:nowrap !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+    padding:8px clamp(4px,.7vw,12px) !important;
+    font-size:clamp(10px,.78vw,14px) !important;
+    line-height:1.05 !important;
+    box-sizing:border-box !important;
+    flex:none !important;
+    transform:none !important;
+  }
+  #overlay .footer > .right.menuActionRow > #menuInfoBtn .q,
+  #overlay .footer > .right.menuActionRow > #menuInfoBtn .lab{
+    display:inline-flex !important;
+    align-items:center !important;
+  }
+  #overlay .footer > .right.menuActionRow > #menuInfoBtn{gap:6px !important;}
+</style>
+<script id="hotfix57_menu_row_authority_v2_script">
+(function(){
+  const IDS=['startCycleBtn','startInfiniteBtn','dailyChallengeBtn','coopOnlineBtn','dailyBtn','achievementsBtn','menuInfoBtn'];
+  function byId(id){ try{return document.getElementById(id);}catch(_e){ return null; } }
+  function getRow(){
+    try{
+      const row = document.querySelector('#overlay .footer > .right.menuActionRow') || (byId('startCycleBtn') && byId('startCycleBtn').parentElement);
+      return row || null;
+    }catch(_e){ return null; }
+  }
+  function normalize(){
+    try{
+      const row = getRow();
+      if(!row) return;
+      row.classList.add('menuActionRow');
+      row.style.setProperty('display','grid','important');
+      row.style.setProperty('grid-template-columns','repeat(7,minmax(0,1fr))','important');
+      row.style.setProperty('gap','8px','important');
+      row.style.setProperty('width','100%','important');
+      row.style.setProperty('min-width','0','important');
+      const nodes=[];
+      for(const id of IDS){
+        const el=byId(id);
+        if(!el) continue;
+        nodes.push(el);
+        if(el.parentElement!==row) row.appendChild(el);
+        el.hidden=false;
+        el.removeAttribute('hidden');
+        el.style.setProperty('display','inline-flex','important');
+        el.style.setProperty('visibility','visible','important');
+        el.style.setProperty('opacity','1','important');
+        el.style.setProperty('width','100%','important');
+        el.style.setProperty('min-width','0','important');
+        el.style.setProperty('max-width','none','important');
+        el.style.setProperty('height','40px','important');
+        el.style.setProperty('margin','0','important');
+        el.style.setProperty('position','static','important');
+        el.style.setProperty('align-items','center','important');
+        el.style.setProperty('justify-content','center','important');
+        el.style.setProperty('white-space','nowrap','important');
+        el.style.setProperty('overflow','hidden','important');
+        el.style.setProperty('text-overflow','ellipsis','important');
+        el.style.setProperty('flex','none','important');
+      }
+      nodes.forEach(el=>{ if(el.parentElement===row) row.appendChild(el); });
+      Array.from(row.children).forEach(ch=>{
+        if(!IDS.includes(ch.id)){
+          if(ch.classList && ch.classList.contains('tag')) return;
+        }
+      });
+    }catch(_e){}
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', normalize, {once:true}); else normalize();
+  window.addEventListener('resize', normalize, {passive:true});
+  window.addEventListener('focus', normalize, {passive:true});
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) normalize(); }, {passive:true});
+  setTimeout(normalize, 50); setTimeout(normalize, 250); setTimeout(normalize, 1000); setTimeout(normalize, 2500);
+  setInterval(normalize, 1000);
+})();
+</script>
+
+
+
+</script>
+
 </body>
 </html>
 
@@ -24675,7 +24920,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
     opacity:.14 !important;
   }
 </style>
-<script id="hotfix54_audio_button_below_toggles_script">
+<script type="application/x-rift-disabled" data-disabled-by="darpa-audio-authority" id="hotfix54_audio_button_below_toggles_script">
 (function(){
   if(window.__RIFT_HOTFIX54_AUDIO_BUTTON_BELOW_TOGGLES__) return;
   window.__RIFT_HOTFIX54_AUDIO_BUTTON_BELOW_TOGGLES__ = true;
@@ -24831,7 +25076,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
     display:flex !important;
   }
 </style>
-<script id="hotfix55_menu_audio_row_fix_script">
+<script type="application/x-rift-disabled" data-disabled-by="darpa-audio-authority" id="hotfix55_menu_audio_row_fix_script">
 (function(){
   function byId(id){ try{return document.getElementById(id);}catch(_e){ return null; } }
   function ensureMenuAudioBtn(){
@@ -24933,7 +25178,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
     justify-content:center !important;
   }
 </style>
-<script id="hotfix56-audio-ref-lock-script">
+<script type="application/x-rift-disabled" data-disabled-by="darpa-audio-authority" id="hotfix56-audio-ref-lock-script">
 (function(){
   function byId(id){ return document.getElementById(id); }
   function ensureMenuAudioGone(){
@@ -24996,181 +25241,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
 </script>
 
 
-<script>
-(function(){
-  if(window.__RIFT_HOTFIX59_INFO_AUDIO__) return;
-  window.__RIFT_HOTFIX59_INFO_AUDIO__ = true;
-
-  function byId(id){ return document.getElementById(id); }
-  function qs(sel){ return document.querySelector(sel); }
-
-  function ensureAudioBtn(){
-    let btn = byId('iapOpenFloating');
-    if(!btn){
-      btn = document.createElement('button');
-      btn.id = 'iapOpenFloating';
-      btn.type = 'button';
-      btn.innerHTML = '<span style="font-weight:1000">AUDIO</span><span style="opacity:.88">&#9656;</span><span style="opacity:.72;font-size:12px">plugin</span>';
-      document.body.appendChild(btn);
-    }
-    btn.setAttribute('aria-label', 'Open audio plugin');
-    btn.style.display = 'flex';
-    btn.style.visibility = 'visible';
-    btn.style.opacity = '1';
-    btn.style.pointerEvents = 'auto';
-    btn.style.position = 'fixed';
-    btn.style.left = 'auto';
-    btn.style.bottom = 'auto';
-    btn.style.zIndex = '2147483001';
-    btn.style.alignItems = 'center';
-    btn.style.gap = '8px';
-    btn.style.padding = '10px 12px';
-    btn.style.borderRadius = '14px';
-    btn.style.border = '1px solid rgba(255,255,255,.18)';
-    btn.style.background = 'linear-gradient(180deg,rgba(22,24,40,.94),rgba(12,14,26,.94))';
-    btn.style.color = '#fff';
-    btn.style.boxShadow = '0 12px 32px rgba(0,0,0,.45),0 0 0 1px rgba(170,92,255,.14),0 0 16px rgba(170,92,255,.10)';
-    btn.style.backdropFilter = 'blur(10px)';
-    btn.style.webkitBackdropFilter = 'blur(10px)';
-    btn.style.whiteSpace = 'nowrap';
-    return btn;
-  }
-
-  function placeAudioBtn(){
-    const btn = ensureAudioBtn();
-    const panel = byId('skipHud');
-    let top = Math.max(14, window.innerHeight - 80);
-    let right = 14;
-    if(panel){
-      const r = panel.getBoundingClientRect();
-      top = Math.round(r.bottom + 10);
-      right = Math.max(14, Math.round(window.innerWidth - r.right));
-    }
-    btn.style.top = top + 'px';
-    btn.style.right = right + 'px';
-  }
-
-  function openAudioOverlay(){
-    const ov = byId('audioPluginOverlay');
-    if(!ov) return;
-    ov.style.display = 'flex';
-    ov.style.visibility = 'visible';
-    ov.style.pointerEvents = 'auto';
-    ov.setAttribute('aria-hidden','false');
-    document.body.classList.remove('overlaySovereignOpen');
-  }
-  function closeAudioOverlay(){
-    const ov = byId('audioPluginOverlay');
-    if(!ov) return;
-    ov.style.display = 'none';
-    ov.setAttribute('aria-hidden','true');
-  }
-
-  function wireAudioBtn(){
-    const old = ensureAudioBtn();
-    const btn = old.cloneNode(true);
-    old.parentNode.replaceChild(btn, old);
-    btn.addEventListener('click', function(e){
-      e.preventDefault();
-      e.stopPropagation();
-      openAudioOverlay();
-    });
-  }
-
-  function openDocsOverlay(){
-    const ov = byId('docsOverlay');
-    if(!ov) return;
-    ov.style.display = 'flex';
-    ov.style.visibility = 'visible';
-    ov.style.pointerEvents = 'auto';
-    ov.setAttribute('aria-hidden','false');
-    document.body.classList.remove('overlaySovereignOpen');
-    const legend = byId('enemyLegend'); if(legend) legend.style.visibility = '';
-    const summary = byId('legendSummaryDock'); if(summary) summary.style.visibility = '';
-    const skip = byId('skipHud'); if(skip) skip.style.visibility = '';
-  }
-  function closeDocsOverlay(){
-    const ov = byId('docsOverlay');
-    if(!ov) return;
-    ov.style.display = 'none';
-    ov.setAttribute('aria-hidden','true');
-  }
-
-  function wireInfoBtn(){
-    const btn0 = byId('menuInfoBtn');
-    if(!btn0) return;
-    const btn = btn0.cloneNode(true);
-    btn0.parentNode.replaceChild(btn, btn0);
-    btn.addEventListener('click', function(e){
-      e.preventDefault();
-      e.stopPropagation();
-      openDocsOverlay();
-    });
-  }
-
-  function wireOverlayClose(){
-    const docs = byId('docsOverlay');
-    if(docs && !docs.__hf59bound){
-      docs.__hf59bound = true;
-      docs.addEventListener('click', function(e){ if(e.target === docs) closeDocsOverlay(); });
-      const c = docs.querySelector('.docsClose,[data-close="docs"],button');
-      if(c) c.addEventListener('click', function(e){ e.preventDefault(); closeDocsOverlay(); });
-    }
-    const audio = byId('audioPluginOverlay');
-    if(audio && !audio.__hf59bound){
-      audio.__hf59bound = true;
-      audio.addEventListener('click', function(e){ if(e.target === audio) closeAudioOverlay(); });
-    }
-  }
-
-  function maintain(){
-    placeAudioBtn();
-    const btn = byId('iapOpenFloating');
-    if(btn){
-      btn.hidden = false;
-      btn.removeAttribute('hidden');
-      btn.classList.remove('hidden');
-      btn.style.display = 'flex';
-      btn.style.visibility = 'visible';
-      btn.style.opacity = '1';
-      btn.style.pointerEvents = 'auto';
-    }
-    if(getComputedStyle(byId('docsOverlay')||document.body).display !== 'none'){
-      document.body.classList.remove('overlaySovereignOpen');
-      const legend = byId('enemyLegend'); if(legend) legend.style.visibility = '';
-      const summary = byId('legendSummaryDock'); if(summary) summary.style.visibility = '';
-      const skip = byId('skipHud'); if(skip) skip.style.visibility = '';
-    }
-  }
-
-  function boot(){
-    wireAudioBtn();
-    wireInfoBtn();
-    wireOverlayClose();
-    maintain();
-    setTimeout(function(){ wireAudioBtn(); wireInfoBtn(); wireOverlayClose(); maintain(); }, 150);
-    setTimeout(function(){ wireAudioBtn(); wireInfoBtn(); wireOverlayClose(); maintain(); }, 900);
-    let ticks = 0;
-    const id = setInterval(function(){
-      ticks++;
-      maintain();
-      if(ticks > 60) clearInterval(id);
-    }, 250);
-    window.addEventListener('resize', maintain, {passive:true});
-    window.addEventListener('focus', maintain, {passive:true});
-    document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'visible') maintain(); }, {passive:true});
-    document.addEventListener('keydown', function(e){
-      if(e.key === 'Escape'){
-        closeDocsOverlay();
-        closeAudioOverlay();
-      }
-    });
-  }
-
-  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, {once:true});
-  else boot();
-})();
-</script>
+<script>/* darpa cleanup: removed hotfix59 duplicate info/audio binder family; single-authority audio/docs controller remains */</script>
 <style id="hotfix59InfoAudioStyle">
   #iapOpenFloating{min-width:92px;height:42px;font:inherit !important}
   #docsOverlay{position:fixed !important;inset:0 !important;display:none;align-items:center;justify-content:center;z-index:2147483000 !important;background:rgba(0,0,0,.62) !important;backdrop-filter:blur(8px) !important;-webkit-backdrop-filter:blur(8px) !important;}
@@ -25221,7 +25292,7 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
     justify-content:center !important;
   }
 </style>
-<script id="hotfix60-info-audio-final-script">
+<script type="application/x-rift-disabled" data-disabled-by="darpa-audio-authority" id="hotfix60-info-audio-final-script">
 (function(){
   if(window.__RIFT_HOTFIX60_INFO_AUDIO_FINAL__) return;
   window.__RIFT_HOTFIX60_INFO_AUDIO_FINAL__ = true;
@@ -25537,5 +25608,109 @@ body[data-ui-compact="1"] #cycleVictoryOverlay .footer .right > *{
     W.updateCornerHud = syncLegendCore;
   }
   if(D.readyState==='loading') D.addEventListener('DOMContentLoaded', boot, {once:true}); else boot();
+})();
+</script>
+
+
+<!-- hotfix63: canonical stack = toggle panel above, audio button below, always visible -->
+<style id="hotfix63_audio_under_skiphud_style">
+  #skipHud{
+    z-index:2147483601 !important;
+  }
+  #iapOpenFloating{
+    position:fixed !important;
+    right:14px !important;
+    left:auto !important;
+    bottom:14px !important;
+    top:auto !important;
+    z-index:2147483600 !important;
+    display:flex !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    pointer-events:auto !important;
+  }
+</style>
+<script type="application/x-rift-disabled" data-disabled-by="darpa-audio-authority" id="hotfix63_audio_under_skiphud_script">
+(function(){
+  const D=document, W=window;
+  const byId=id=>D.getElementById(id);
+  if(W.__RIFT_HOTFIX63_AUDIO_UNDER__) return;
+  W.__RIFT_HOTFIX63_AUDIO_UNDER__=true;
+
+  function ensureBtn(){
+    let btn=byId('iapOpenFloating');
+    if(!btn){
+      btn=D.createElement('button');
+      btn.id='iapOpenFloating';
+      btn.type='button';
+      btn.className='audioPluginBtn';
+      btn.setAttribute('data-audio-plugin-btn','1');
+      btn.innerHTML='<span style="font-weight:1000;letter-spacing:.06em;text-transform:uppercase">AUDIO</span><span style="opacity:.85">▸ plugin</span>';
+      D.body.appendChild(btn);
+    }
+    btn.style.display='flex';
+    btn.style.visibility='visible';
+    btn.style.opacity='1';
+    btn.style.pointerEvents='auto';
+    btn.style.position='fixed';
+    btn.style.left='auto';
+    btn.style.right='14px';
+    btn.style.top='auto';
+    btn.style.bottom='14px';
+    btn.style.zIndex='2147483600';
+    return btn;
+  }
+
+  function place(){
+    const btn=ensureBtn();
+    const panel=byId('skipHud');
+    const gap=12;
+    const bottomMargin=14;
+    const btnH=Math.max(44, Math.round(btn.getBoundingClientRect().height||btn.offsetHeight||44));
+    btn.style.bottom=bottomMargin+'px';
+    btn.style.top='auto';
+    if(panel){
+      panel.style.position='fixed';
+      panel.style.right='14px';
+      panel.style.left='auto';
+      panel.style.top='auto';
+      panel.style.bottom=(bottomMargin + btnH + gap)+'px';
+      panel.style.zIndex='2147483601';
+      const panelRect=panel.getBoundingClientRect();
+      const overflowTop=14-panelRect.top;
+      if(overflowTop>0){
+        const cur=parseInt(panel.style.bottom||'0',10)||0;
+        panel.style.bottom=Math.max(bottomMargin + btnH + gap - overflowTop, bottomMargin)+'px';
+      }
+      const right=Math.max(14, Math.round((W.innerWidth||1280)-panel.getBoundingClientRect().right));
+      btn.style.right=right+'px';
+      panel.style.right=right+'px';
+    }
+  }
+
+  function openAudio(ev){
+    if(ev){ ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation && ev.stopImmediatePropagation(); }
+    const ov=byId('audioPluginOverlay');
+    if(!ov) return false;
+    ov.style.display='flex';
+    ov.setAttribute('aria-hidden','false');
+    D.body.classList.add('audio-overlay-open','audioOverlayOpen','overlaySovereignOpen');
+    return false;
+  }
+
+  function bind(){
+    const btn=ensureBtn();
+    if(!btn.__hf63Bound){
+      btn.__hf63Bound=true;
+      btn.onclick=openAudio;
+      btn.addEventListener('click', openAudio, true);
+    }
+  }
+
+  function tick(){ bind(); place(); }
+  if(D.readyState==='loading') D.addEventListener('DOMContentLoaded', tick, {once:true}); else tick();
+  W.addEventListener('resize', tick, {passive:true});
+  W.addEventListener('orientationchange', tick, {passive:true});
+  setTimeout(tick,50); setTimeout(tick,250); setTimeout(tick,1000); setInterval(tick,250);
 })();
 </script>
