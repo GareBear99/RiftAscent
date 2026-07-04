@@ -1,0 +1,73 @@
+RIFTASCENT PATCH 2 — Achievements Validation + Audio Sovereignty + Legend Charter
+====================================================================================
+
+ACHIEVEMENTS: FULL ACHIEVABILITY AUDIT (all 1000)
+  Method: parsed all 1000 defs; extracted every rule metric/op/value; cross-
+  referenced against the ach_metric() resolver AND against real runtime
+  writers (increments only — resets excluded); read the ach_scan evaluator.
+  RESULT BEFORE PATCH: 979 / 1000 achievable.
+    - Resolver coverage: 31/31 metrics used by defs are resolved. PASS
+    - Evaluator: ach_scan gates mode==="INFINITE", rule.requiresMode, and
+      requires==="lose_or_menu" finalization; ach_poll runs @250ms with
+      state-change hooks; storage-backed unlock map. PASS
+    - Writers: 19/20 run metrics have live writers. FAIL x2:
+      (1) shopPurchases_run had ZERO writers ("Track rerolls/purchases" hook
+          only implemented the reroll branch) -> 8 BUY_ achievements
+          (Forge A Build 1..40) permanently stuck at 0.
+      (2) 13 comboMult_run defs demanded x6..x10 while the engine hard-caps
+          combo at COMBO_MAX_MULT=4.0 (+1.5 UFO clamp = x5.5 absolute max)
+          -> COMBOM_6..10 and 8 IH_CM_* defs mathematically impossible.
+  FIXES APPLIED -> 1000 / 1000 achievable:
+    - shopPurchases++ wired at the single purchase executor
+      (player.credits -= c; it.apply(); ...), fail-closed.
+    - The 13 impossible defs remapped into the reachable UFO-surge band,
+      strictly ordered ABOVE each mode's existing ladder rungs:
+      ANY: COMBOM_6..10 -> x5.1/5.2/5.3/5.4/5.5
+      INFINITE: 8 IH_CM_* -> x5.1..x5.5 (evenly spaced, monotonic)
+      Descriptions updated to state the UFO-surge requirement.
+    - Post-patch parse: 1000 defs, 1000 unique ids, 100 INFINITE, zero rules
+      above the x5.5 physical cap. Boot validator constraints still satisfied.
+    (Pre-existing duplicate thresholds inside some IH families are original
+     design, achievable, and left untouched.)
+
+AUDIO BUTTON RESTORED (root cause: Patch-1 friendly fire)
+  The button was never deleted — the static element and the core binder
+  (__IAP_BINDINGS_INIT__) survived. Patch 1 demoted its z-index from
+  2147483400 to 230, UNDER the start-menu overlay (340). But the core design
+  intentionally floats this button above menus: it is the guaranteed
+  user-gesture audio entry point "even when HUD is obscured".
+  Fix: dedicated --z-audio tier at 350 (above overlays, below modals) with a
+  full visibility contract (display/visibility/opacity/pointer-events
+  !important, hidden/aria-hidden cleared) enforced by the constitution's
+  layout pass, which also re-runs the core binder if the button was not yet
+  bound. The audio OVERLAY itself remains at the overlay tier — separate
+  from, and never coupled to, the legend panel.
+
+LEGEND CHARTER (the "too many competing systems" fix)
+  Census: the right column carried FOUR legend-adjacent subsystems —
+  two independent summary-dock creators (ensureLegendSummary and
+  ensureSummaryDock, in different layers), hotfix62's removeExtras deleting
+  whatever they created (a create/destroy loop), and a phantom
+  legendMiniDock that no code creates anymore (its remover fights a ghost).
+  Charter: summary docks are DEPRECATED. Both creators are guarded
+  (constitution flag -> early return); hotfix62's removal stands as an
+  uncontested janitor; the phantom removal is a no-op.
+  Sovereign panels, visually distinct: the toggle panel (#skipHud) gets its
+  own border/backdrop and a 'RUN TOGGLES' header (pure CSS ::before, zero
+  DOM); the legend gets an amber accent border; the constitution now also
+  publishes --legendBottom each layout pass so the legend body always stops
+  cleanly above the toggle panel — three panels, one owner, no overlap:
+    ENEMY LEGEND (amber, autonomous top zone)
+    RUN TOGGLES  (blue, bottom-anchored above the audio button)
+    AUDIO        (floating gesture button, z 350, above menus by design)
+
+VERIFIED
+  47 script blocks x node --check: 0 failures
+  ACH.DEF re-parsed post-patch: 1000/1000/100 intact
+  constitution + tribuf blocks intact; all Patch-1 guarantees preserved
+
+APPLY: replace index.html with index.patched.html (same as Patch 1).
+SMOKE: menu -> AUDIO button visible bottom-right ABOVE the menu overlay and
+  opens the audio plugin overlay; in-game -> three distinct right panels;
+  buy 1 upgrade -> Forge A Build 1 unlocks; sustain combo past x4 during a
+  UFO surge -> COMBOM_6 band reachable.
